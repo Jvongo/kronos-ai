@@ -48,6 +48,8 @@ backend/app/services/market_data/      ← 新增抽象层与适配器
 | `docker-compose.yml` | 注入 `KRONOS_TDX_BASE_URL` + `extra_hosts`（容器内访问宿主服务） |
 | `backend/tests/test_*.py` | 新增单测 |
 | `backend/scripts/verify_tdx_migration.py` | 新增联调验证脚本 |
+| `backend/scripts/build_stock_names.py` | 新增名称映射生成脚本 |
+| `backend/data/stock_names.json` | 新增名称映射数据（已入库） |
 | `backend/main.py` / `prediction_service.py` / `frontend/**` | **零改动** |
 
 ## 3. 接口契约对照
@@ -133,7 +135,7 @@ backend/app/services/market_data/      ← 新增抽象层与适配器
 
 ## 9. 已知限制（不在本次范围）
 
-- TDX 本地服务**不提供证券名称**，未收录代码显示为 `股票{code}`；如需中文名，向 `backend/data/stock_names.json` 注入映射即可生效（已预留）。
+- TDX 本地服务**不提供证券名称**，已通过 `backend/scripts/build_stock_names.py` 解析本地 `*.tnf` 生成 `backend/data/stock_names.json`（18902 条，可预测代码覆盖 98.5%）；未收录代码回落为 `股票{code}`。
 - `amount` 源为 float32（十亿级误差 ±256 元），故不透传给上层。
 - `validate_stock_code` 仍只放行沪深主板/创业板/科创板，北交所代码会被前置拦截（保持原行为，不扩展）。
 - 本仓库当前**未初始化 git**，本次改动未提交；如需纳入 Git Flow 需先确认初始化仓库。

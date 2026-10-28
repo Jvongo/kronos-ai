@@ -1,7 +1,7 @@
 # 行情数据源迁移报告：Baostock → TDX 本地服务
 
 > 完成时间 2026-10-29 · 目标服务 `http://127.0.0.1:8010/api/v1`（实测在线，`vipdoc_exists=true`）
-> 单元测试 **42 passed** · 真实联调 **14/14 通过**
+> 单元测试 **43 passed** · 真实联调 **15/15 通过** · 证券名称映射 **18902 条**（可预测代码覆盖 98.5%）
 
 ## 1. 结论速览
 
@@ -13,6 +13,7 @@
 | 抽象层 | 保留并新增 `MarketDataSource` 抽象 + 适配器 + 工厂 |
 | 契约变化 | 公共方法签名与日线字段完全一致；`get_stock_info` 新增 3 个可选键 |
 | 回归风险 | 低：三级降级链 + Baostock 适配器保留可回滚 |
+| 证券名称 | 已从通达信本地名称表生成 `backend/data/stock_names.json`（18902 条） |
 
 ## 2. 替换范围
 
@@ -53,6 +54,9 @@ http://127.0.0.1:8010/api/v1/{health,securities,kline/daily}
 | `backend/config.py` | `DATA_SOURCE: baostock → tdx_local`（2 行） |
 | `backend/tests/conftest.py`、`test_market_data_tdx.py` | 新增（42 个用例） |
 | `backend/scripts/verify_tdx_migration.py` | 新增（联调验证） |
+| `backend/scripts/build_stock_names.py` | 新增（从 TDX `*.tnf` 生成名称映射） |
+| `backend/data/stock_names.json` | 新增（18902 条名称映射，已入库） |
+| `.gitignore` | 放行 `backend/data/stock_names.json`，其余 `data/` 仍忽略 |
 | `docker-compose.yml` | 注入 `KRONOS_TDX_*` 环境变量 + `extra_hosts` |
 | `README.md` | 数据源描述同步（5 处） |
 | `main.py`、`prediction_service.py`、`frontend/**` | **未改动** |
@@ -145,7 +149,7 @@ http://127.0.0.1:8010/api/v1/{health,securities,kline/daily}
 ### 6.1 单元测试（不依赖网络）
 
 ```bash
-cd backend && pytest tests -q      # 42 passed in 1.17s
+cd backend && pytest tests -q      # 43 passed
 ```
 
 覆盖：代码归一化 10 组 / 非法输入 6 组、字段映射与类型、`amount` 不透传、字符串价格、`volume=None`、坏价格抛错、日期区间参数、offset 尾部兜底、分页（2 页）、`40401` 不重试、`40001`、5xx 重试成功、重试耗尽、超时、连接失败、非 JSON、坏信封、脏行丢弃、探活、门面契约、市场中文名、名称兜底、全源不可用降级、链降级、合成数据开关、缓存 TTL/清理、`validate_stock_code` 不变。
@@ -153,7 +157,7 @@ cd backend && pytest tests -q      # 42 passed in 1.17s
 ### 6.2 真实服务联调
 
 ```bash
-python backend/scripts/verify_tdx_migration.py     # 14/14 通过
+python backend/scripts/verify_tdx_migration.py     # 15/15 通过
 ```
 
 | # | 场景 | 实测结果 |
@@ -172,6 +176,7 @@ python backend/scripts/verify_tdx_migration.py     # 14/14 通过
 | 11 | 缓存命中 | 首次 1 次请求，二次新增 0 次 |
 | 12 | 合成数据默认关闭 | `allow_synthetic_fallback=False` |
 | 13 | 模型输入兼容 | `pd.DataFrame` 装配 60 行，时间戳单调递增 |
+| 14 | 名称映射生效 | 加载 18902 条；抽样 600519→贵州茅台、300750→宁德时代、688981→中芯国际 |
 
 ### 6.3 契约一致性
 
@@ -186,12 +191,15 @@ python backend/scripts/verify_tdx_migration.py     # 14/14 通过
 
 ## 7. 已知限制
 
-1. **证券名称**：TDX 服务无名称字段，未收录代码显示 `股票{code}`。内置 9 条常用名（含 `sh:000001` 上证指数歧义处理）；可向 `backend/data/stock_names.json` 注入 `{"600000":"浦发银行"}` 生效，无需改代码。
+1. **证券名称（已解决）**：TDX HTTP 接口无名称字段，改由 `backend/scripts/build_stock_names.py` 解析本地 `T0002/hq_cache/{shs,szs,bjs}.tnf`（50 字节头 + 360 字节/条，名称位于偏移 31 的 32 字节 GBK），与 `vipdoc` 实际日线文件求交后生成 `backend/data/stock_names.json`。
+   - 总量 18902 条（含 `sh600000` 类带前缀键与唯一裸键）；可预测代码覆盖：沪 98.59%、深 98.52%。
+   - 未覆盖的约 1.5% 多为已退市/长期停牌（缺失代码中约 92% 末条日线早于 2026-10-01），自动回落为 `股票{code}`。
+   - 数据更新后重跑脚本即可刷新：`python backend/scripts/build_stock_names.py`。
 2. **不返回 `amount`**：源 float32 精度不足；模型侧已在 `kronos.py` 缺列时按 `volume × 均价` 自算，不影响。
 3. **`validate_stock_code` 未扩展**：北交所代码仍被前置拦截（保持原行为）。若需支持，另行评估。
 4. **失败不再静默造数**：这是与旧实现唯一的行为差异，属有意修正；如需旧行为，设 `KRONOS_ALLOW_SYNTHETIC_FALLBACK=true`。
 5. **未做端到端 `/predict` 联调**：本机环境无 `torch`，模型侧无法加载；已验证其唯一数据依赖（≥30 条 OHLC + 可解析日期）成立。
-6. **仓库未初始化 Git**：`H:\AIcoding\WorkBuddy\kronos-ai` 当前不是 git 仓库，本次改动未提交。如需纳入 Git Flow，需先确认是否 `git init`。
+6. **Git**：仓库已初始化（`main` 为初始版本，`develop` 为集成分支，遵循 Git Flow）；后续功能从 `develop` 拉 `feature/*`。
 
 ## 8. 代码评审记录
 
