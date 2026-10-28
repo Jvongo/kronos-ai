@@ -61,6 +61,27 @@ _SYNTHETIC_BASE_PRICES: Dict[str, float] = {
 }
 
 
+def _parse_trade_date(value: str) -> datetime:
+    """解析交易日期字符串。
+
+    Args:
+        value: `YYYY-MM-DD` 或 `YYYYMMDD`
+
+    Returns:
+        datetime 对象
+
+    Raises:
+        ValueError: 格式非法
+    """
+    text = str(value or "").strip()
+    for fmt in ("%Y-%m-%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"日期格式非法: {value!r}，应为 YYYY-MM-DD 或 YYYYMMDD")
+
+
 class StockService:
     """股票数据服务门面。"""
 
@@ -206,6 +227,40 @@ class StockService:
 
         logger.info("%s 在 %s ~ %s 区间无数据", code, start_date, end_date)
         return []
+
+    async def get_history_ending_before(
+        self, code: str, end_date: str, days: int = 60
+    ) -> List[Dict[str, Any]]:
+        """获取「截止指定日期（不含当日）」的最近 N 个交易日数据。
+
+        用于回测：指定预测起始日时，模型输入必须截止到该日之前，
+        否则预测数值属于「今天之后」而日期标签贴在早期，会出现虚假跳空。
+
+        Args:
+            code: 股票代码
+            end_date: 截止日期（不含），`YYYY-MM-DD` 或 `YYYYMMDD`
+            days: 需要的交易日数量
+
+        Returns:
+            按日期升序的日线列表；不足或无数据时返回已取到的部分（可能为空）
+
+        Raises:
+            ValueError: 日期格式非法
+        """
+        cutoff = _parse_trade_date(end_date)
+        days = max(1, int(days))
+
+        # 日历日缓冲：交易日约为日历日的 2/3，留 3 倍余量
+        start = cutoff - timedelta(days=max(days * 3, 120))
+        bars = await self.get_stock_data_for_dates(
+            code,
+            start.strftime("%Y-%m-%d"),
+            (cutoff - timedelta(days=1)).strftime("%Y-%m-%d"),
+        )
+
+        cutoff_str = cutoff.strftime("%Y-%m-%d")
+        bars = [bar for bar in bars if str(bar.get("date", "")) < cutoff_str]
+        return bars[-days:]
 
     async def validate_stock_code(self, code: str) -> bool:
         """验证股票代码格式（保持迁移前实现不变）。"""

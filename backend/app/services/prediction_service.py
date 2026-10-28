@@ -30,10 +30,24 @@ class PredictionService:
             if not stock_info:
                 raise ValueError(f"无法获取股票 {code} 的信息")
             
-            # 获取历史数据
-            stock_data = await stock_service.get_stock_data(code, days=60)
+            # 获取历史数据：指定起始日时，输入窗口必须截止到该日之前（回测语义），
+            # 否则预测数值属于「今天之后」而日期标签贴在早期，会出现虚假跳空
+            if start_date:
+                stock_data = await stock_service.get_history_ending_before(
+                    code, start_date, days=60
+                )
+            else:
+                stock_data = await stock_service.get_stock_data(code, days=60)
             if not stock_data or len(stock_data) < 30:
-                raise ValueError(f"股票 {code} 的历史数据不足")
+                raise ValueError(
+                    f"股票 {code} 的历史数据不足"
+                    + (f"（截止 {start_date} 之前）" if start_date else "")
+                )
+            logger.info(
+                "预测输入窗口 %s: %s ~ %s（%d 根，末收 %s）",
+                code, stock_data[0]["date"], stock_data[-1]["date"],
+                len(stock_data), stock_data[-1]["close"],
+            )
             
             # 使用Kronos模型进行预测
             predictions = await self._predict_with_kronos(stock_data, prediction_days, code, start_date)
