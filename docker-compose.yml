@@ -1,0 +1,53 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: kronos-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+      - ENVIRONMENT=production
+      - HF_HUB_OFFLINE=1
+      # 行情数据源：容器内访问宿主机 TDX 本地服务（宿主端口 8010，勿用 127.0.0.1）
+      - KRONOS_MARKET_SOURCE_CHAIN=tdx_local
+      - KRONOS_TDX_BASE_URL=http://host.docker.internal:8010
+      - KRONOS_TDX_TIMEOUT=10
+      - KRONOS_MARKET_CACHE_TTL=300
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Linux 宿主需要；Docker Desktop 自带
+    volumes:
+      - ./backend/data:/app/data  # 持久化数据目录
+      - C:/Users/10255/.cache/huggingface:/root/.cache/huggingface  # 复用宿主机Kronos模型缓存
+    networks:
+      - kronos-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: kronos-frontend
+    ports:
+      - "3000:80"  # nginx 容器内监听 80
+    depends_on:
+      - backend
+    networks:
+      - kronos-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  kronos-network:
+    driver: bridge
