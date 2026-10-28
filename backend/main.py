@@ -132,13 +132,23 @@ async def get_stock_info(code: str):
 
 
 @app.get("/stock/{code}/history")
-async def get_stock_history(code: str, days: int = 30):
-    """获取股票历史数据"""
+async def get_stock_history(code: str, days: int = 30, end_date: Optional[str] = None):
+    """获取股票历史数据
+
+    Args:
+        code: 股票代码
+        days: 交易日数量（1-365）
+        end_date: 可选，截止日期（不含当日，`YYYY-MM-DD`）；
+            指定后返回「该日期之前」的最近 days 个交易日，用于回测对齐
+    """
     try:
         if days < 1 or days > 365:
             raise HTTPException(status_code=400, detail="天数必须在1-365之间")
-        
-        stock_data = await stock_service.get_stock_data(code, days)
+
+        if end_date:
+            stock_data = await stock_service.get_history_ending_before(code, end_date, days)
+        else:
+            stock_data = await stock_service.get_stock_data(code, days)
         if not stock_data:
             raise HTTPException(status_code=404, detail="股票历史数据未找到")
         

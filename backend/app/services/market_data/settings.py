@@ -9,6 +9,7 @@ from typing import Tuple
 
 BACKEND_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_NAMES_FILE = BACKEND_DIR / "data" / "stock_names.json"
+DEFAULT_HOLIDAYS_FILE = BACKEND_DIR / "data" / "market_holidays.json"
 
 
 def _env_str(key: str, default: str) -> str:
@@ -60,6 +61,8 @@ class MarketDataSettings:
     allow_synthetic_fallback: bool = False
     # 证券名称映射文件（服务端不提供名称，可自行注入）
     names_file: Path = field(default=DEFAULT_NAMES_FILE)
+    # 休市日历文件（仅用于「超出本地行情数据范围」的日期推算）
+    holidays_file: Path = field(default=DEFAULT_HOLIDAYS_FILE)
 
 
 def load_settings() -> MarketDataSettings:
@@ -79,4 +82,5 @@ def load_settings() -> MarketDataSettings:
         cache_ttl=_env_float("KRONOS_MARKET_CACHE_TTL", 300.0),
         allow_synthetic_fallback=_env_bool("KRONOS_ALLOW_SYNTHETIC_FALLBACK", False),
         names_file=Path(names_file),
+        holidays_file=Path(_env_str("KRONOS_MARKET_HOLIDAYS_FILE", str(DEFAULT_HOLIDAYS_FILE))),
     )

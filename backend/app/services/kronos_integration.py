@@ -305,8 +305,17 @@ class KronosIntegration:
             }
     
     def predict_stock(self, stock_data: List[Dict[str, Any]], 
-                      prediction_days: int = 5, start_date: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
-        """使用Kronos模型预测股票"""
+                      prediction_days: int = 5, start_date: Optional[str] = None,
+                      trading_days: Optional[List[str]] = None) -> Optional[List[Dict[str, Any]]]:
+        """使用Kronos模型预测股票
+
+        Args:
+            stock_data: 历史日线（升序）
+            prediction_days: 预测步数
+            start_date: 预测起始日期（仅用于生成时间戳，预测数值由 stock_data 决定）
+            trading_days: 预测对应的真实交易日列表（推荐传入，自动跳过节假日）；
+                为空时退化为工作日推算
+        """
         if not self.model_loaded or not self.predictor:
             logger.error("Kronos模型未加载或预测器未初始化")
             return None
@@ -320,8 +329,19 @@ class KronosIntegration:
             df = pd.DataFrame(stock_data)
             df['timestamps'] = pd.to_datetime(df['date'])
             
-            # 创建未来时间戳
-            if start_date:
+            # 生成未来时间戳：优先使用调用方给出的真实交易日（跳过节假日）
+            if trading_days:
+                dates = [pd.to_datetime(item) for item in list(trading_days)[:prediction_days]]
+                if len(dates) < prediction_days:
+                    logger.warning("交易日列表不足 %s 个（实际 %s），按工作日补齐",
+                                   prediction_days, len(dates))
+                    cursor = dates[-1] if dates else df['timestamps'].iloc[-1]
+                    while len(dates) < prediction_days:
+                        cursor = cursor + pd.Timedelta(days=1)
+                        if cursor.weekday() < 5:
+                            dates.append(cursor)
+                future_timestamps = pd.DatetimeIndex(dates)
+            elif start_date:
                 # 使用用户指定的开始日期
                 start_timestamp = pd.to_datetime(start_date)
                 future_timestamps = pd.date_range(

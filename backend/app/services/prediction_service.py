@@ -36,21 +36,36 @@ class PredictionService:
                 stock_data = await stock_service.get_history_ending_before(
                     code, start_date, days=60
                 )
+                anchor = start_date
             else:
                 stock_data = await stock_service.get_stock_data(code, days=60)
+                anchor = None
             if not stock_data or len(stock_data) < 30:
                 raise ValueError(
                     f"股票 {code} 的历史数据不足"
                     + (f"（截止 {start_date} 之前）" if start_date else "")
                 )
+
+            # 预测日期使用真实交易日（跳过周末与节假日）
+            if anchor is None:
+                anchor = (
+                    datetime.strptime(stock_data[-1]["date"], "%Y-%m-%d")
+                    + timedelta(days=1)
+                ).strftime("%Y-%m-%d")
+            future_dates = await stock_service.get_trading_days(anchor, prediction_days)
+
             logger.info(
-                "预测输入窗口 %s: %s ~ %s（%d 根，末收 %s）",
+                "预测输入窗口 %s: %s ~ %s（%d 根，末收 %s）→ 预测 %s ~ %s",
                 code, stock_data[0]["date"], stock_data[-1]["date"],
                 len(stock_data), stock_data[-1]["close"],
+                future_dates[0] if future_dates else "-",
+                future_dates[-1] if future_dates else "-",
             )
-            
+
             # 使用Kronos模型进行预测
-            predictions = await self._predict_with_kronos(stock_data, prediction_days, code, start_date)
+            predictions = await self._predict_with_kronos(
+                stock_data, prediction_days, code, start_date, future_dates
+            )
             
             # 构建响应
             model_info_dict = model_manager.get_model_info()
@@ -75,13 +90,15 @@ class PredictionService:
             logger.error(f"预测股票 {code} 失败: {e}")
             raise
     
-    async def _predict_with_kronos(self, stock_data: List[Dict[str, Any]], prediction_days: int, code: str, start_date: Optional[str] = None) -> List[PredictionPoint]:
+    async def _predict_with_kronos(self, stock_data: List[Dict[str, Any]], prediction_days: int, code: str, start_date: Optional[str] = None, future_dates: Optional[List[str]] = None) -> List[PredictionPoint]:
         """使用Kronos模型进行预测"""
         try:
             # 获取模型使用权
             async with model_manager.get_model() as model:
                 # 进行预测
-                predictions = model.predict_stock(stock_data, prediction_days, start_date)
+                predictions = model.predict_stock(
+                    stock_data, prediction_days, start_date, trading_days=future_dates
+                )
                 
                 if predictions:
                     # 转换为PredictionPoint格式

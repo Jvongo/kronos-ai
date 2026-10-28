@@ -23,8 +23,13 @@ const App: React.FC = () => {
       setLoading(true);
       message.loading('正在预测中，请稍候...', 0);
 
-      // 获取历史数据
-      const historyResponse = await StockAPI.getStockHistory(request.code, 90);
+      // 获取历史数据：指定开始预测日期时，历史窗口要截止到该日之前，
+      // 否则固定取「最新 90 根」会让早期起始日几乎没有历史可画
+      const historyResponse = await StockAPI.getStockHistory(
+        request.code,
+        90,
+        request.start_date || undefined
+      );
       if (historyResponse.success) {
         console.log('Historical data received:', historyResponse.data.history);
         // 处理日期格式

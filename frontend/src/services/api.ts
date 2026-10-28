@@ -87,9 +87,10 @@ export class StockAPI {
   }
 
   // 获取股票历史数据
-  static async getStockHistory(code: string, days: number = 30): Promise<APIResponse<StockHistoryResponse>> {
+  static async getStockHistory(code: string, days: number = 30, endDate?: string): Promise<APIResponse<StockHistoryResponse>> {
     const response = await api.get(`/stock/${code}/history`, {
-      params: { days }
+      // endDate 指定后取「该日期之前」的最近 days 根，用于回测时让历史线截止到起始日
+      params: endDate ? { days, end_date: endDate } : { days }
     });
     return response.data;
   }

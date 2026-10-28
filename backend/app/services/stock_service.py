@@ -50,6 +50,9 @@ _BUILTIN_NAMES: Dict[str, str] = {
     "sz:002415": "海康威视",
 }
 
+# 交易日历参考标的（上证指数，日线覆盖最长，用于推导真实交易日）
+_CALENDAR_INDEX = "sh000001"
+
 # 合成数据兜底时的基准价（仅 KRONOS_ALLOW_SYNTHETIC_FALLBACK=true 时使用）
 _SYNTHETIC_BASE_PRICES: Dict[str, float] = {
     "600519": 1500.0,
@@ -115,6 +118,7 @@ class StockService:
         self._cache: Dict[str, Any] = {}
         self._clock = time.monotonic
         self._names: Optional[Dict[str, str]] = None
+        self._holidays: Optional[set] = None
 
         # 兼容旧属性：历史代码可能引用本地缓存目录
         self.cache_dir = Path(__file__).parent.parent.parent / "data" / "cache"
@@ -262,6 +266,52 @@ class StockService:
         bars = [bar for bar in bars if str(bar.get("date", "")) < cutoff_str]
         return bars[-days:]
 
+    async def get_trading_days(self, start_date: str, count: int) -> List[str]:
+        """返回从 start_date（含）起的 count 个真实交易日。
+
+        以参考指数（上证指数）的真实日线为准，因此会自动跳过周末与法定节假日；
+        超出本地行情数据末尾（未来日期）时，退化为「工作日 − 休市文件中的日期」。
+
+        Args:
+            start_date: 起始日期，`YYYY-MM-DD` 或 `YYYYMMDD`
+            count: 需要的交易日数量（1~60）
+
+        Returns:
+            升序日期字符串列表，长度尽量为 count
+
+        Raises:
+            ValueError: 日期格式非法
+        """
+        cutoff = _parse_trade_date(start_date).date()
+        count = max(1, min(int(count), 60))
+
+        window_start = cutoff - timedelta(days=10)
+        window_end = cutoff + timedelta(days=count * 3 + 40)
+        bars = await self.get_stock_data_for_dates(
+            _CALENDAR_INDEX, window_start.isoformat(), window_end.isoformat()
+        )
+
+        cutoff_str = cutoff.isoformat()
+        days = [
+            str(bar.get("date", "")) for bar in bars
+            if str(bar.get("date", "")) >= cutoff_str
+        ][:count]
+        if len(days) >= count:
+            return days
+
+        # 数据未覆盖（未来日期）：按工作日补齐，跳过休市文件中登记的日期
+        holidays = self._load_holidays()
+        cursor = (_parse_trade_date(days[-1]).date() + timedelta(days=1)) if days else cutoff
+        limit = cutoff + timedelta(days=count * 3 + 60)
+        while len(days) < count and cursor <= limit:
+            if cursor.weekday() < 5 and cursor.isoformat() not in holidays:
+                days.append(cursor.isoformat())
+            cursor += timedelta(days=1)
+
+        logger.info("交易日历：数据仅覆盖到 %s，后续日期按工作日+休市文件推算",
+                    days[len(days) - 1] if days else "无")
+        return days[:count]
+
     async def validate_stock_code(self, code: str) -> bool:
         """验证股票代码格式（保持迁移前实现不变）。"""
         if not code or len(code) != 6:
@@ -288,6 +338,24 @@ class StockService:
         """清空内存缓存。"""
         self._cache.clear()
         logger.info("股票数据缓存已清空")
+
+    def _load_holidays(self) -> set:
+        """加载休市日历（可选文件，缺失时返回空集合）。"""
+        if self._holidays is not None:
+            return self._holidays
+
+        self._holidays = set()
+        path = self._settings.holidays_file
+        try:
+            if path and Path(path).exists():
+                with open(path, "r", encoding="utf-8") as handle:
+                    raw = json.load(handle)
+                if isinstance(raw, list):
+                    self._holidays = {str(item).strip() for item in raw if str(item).strip()}
+                    logger.info("已加载休市日历 %s 条: %s", len(self._holidays), path)
+        except (OSError, ValueError) as exc:
+            logger.warning("休市日历加载失败（已忽略）: %s", exc)
+        return self._holidays
 
     def get_source_status(self) -> List[Dict[str, Any]]:
         """探活所有数据源，返回状态列表（供运维/验证脚本使用）。"""
