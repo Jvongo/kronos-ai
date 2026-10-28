@@ -201,7 +201,38 @@ python backend/scripts/verify_tdx_migration.py     # 15/15 通过
 5. **未做端到端 `/predict` 联调**：本机环境无 `torch`，模型侧无法加载；已验证其唯一数据依赖（≥30 条 OHLC + 可解析日期）成立。
 6. **Git**：仓库已初始化（`main` 为初始版本，`develop` 为集成分支，遵循 Git Flow）；后续功能从 `develop` 拉 `feature/*`。
 
-## 8. 代码评审记录
+## 8. Docker 部署（已验证）
+
+| 服务 | 容器 | 宿主端口 → 容器端口 | 状态 |
+|---|---|---|---|
+| backend | `kronos-backend` | `8000 → 8000` | healthy |
+| frontend | `kronos-frontend` | `3000 → 80` | healthy |
+| TDX 行情（外部依赖） | `tdx-local-api` | `8010 → 8000` | healthy |
+
+关键点：**容器内的 `127.0.0.1` 不是宿主机**，行情地址必须走 `host.docker.internal:8010`（compose 已配置 `extra_hosts: host-gateway`，Docker Desktop 自带）。
+
+```bash
+docker compose build backend     # 5m25s（torch CPU 层命中缓存）
+docker compose up -d             # 重建 backend（新 env）与 frontend（新 healthcheck）
+docker compose ps                # 两个容器均 healthy
+```
+
+部署后实测（宿主 `http://127.0.0.1:8000`）：
+
+| 验证项 | 结果 |
+|---|---|
+| `GET /health` | `model_loaded=true`（kronos-base） |
+| `GET /stock/600000` | `name=浦发银行, market=上海, bars=6414, last_date=2026-10-27` |
+| `GET /stock/000001` | `name=平安银行, market=深圳`（前缀判定在容器内同样生效） |
+| `GET /stock/600000/history?days=3` | 3 条真实日线 `2026-10-23~2026-10-27` |
+| `GET /stock/600001` | HTTP 404（不存在证券正确降级） |
+| `POST /predict` | 5 条预测，耗时 **1.07s**（真实行情 + kronos-base） |
+| 容器内 env | `KRONOS_TDX_BASE_URL=http://host.docker.internal:8010` |
+| 容器内名称映射 | `/app/data/stock_names.json` 可见，18902 条 |
+
+补充修正：前端 healthcheck 原为 `curl -f http://localhost:3000` —— `nginx:alpine` 无 `curl` 且容器内监听 80 而非 3000，恒报 unhealthy。已改为 `wget --spider -q http://127.0.0.1:80/`（用 `127.0.0.1` 而非 `localhost`，避免解析到 IPv6 `::1` 被拒）。
+
+## 9. 代码评审记录
 
 | 级别 | 问题 | 处理 |
 |---|---|---|
