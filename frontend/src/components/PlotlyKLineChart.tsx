@@ -129,10 +129,15 @@ const PlotlyKLineChart: React.FC<PlotlyKLineChartProps> = ({
       autorange: true
     },
     legend: {
-      x: 1,
+      // 图例移到图表左侧，竖排堆叠
+      x: 0.01,
       y: 1,
-      xanchor: 'right',
-      yanchor: 'top'
+      xanchor: 'left',
+      yanchor: 'top',
+      orientation: 'v',
+      bgcolor: 'rgba(255, 255, 255, 0.75)',
+      bordercolor: 'rgba(0, 0, 0, 0.15)',
+      borderwidth: 1
     },
     dragmode: 'zoom',
     showlegend: true,
