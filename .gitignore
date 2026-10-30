@@ -366,3 +366,6 @@ secrets.json
 # Local development
 .local/
 local/
+
+# AI 助手工作目录（记忆/会话数据，不纳入版本控制）
+.workbuddy/
